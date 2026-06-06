@@ -1,0 +1,22 @@
+# Python cache files (NEVER commit these)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Model files (large files you don't want on GitHub)
+*.pkl
+*.h5
+*.pt
+models/
+
+# VS Code settings
+.vscode/
+
+# Environment variables
+.env

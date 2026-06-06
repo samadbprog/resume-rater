@@ -1,0 +1,20 @@
+Junior Data Scientist
+
+FinSight Analytics · Hyderabad, India · Full-time
+
+We are looking for a Junior Data Scientist to join our growing analytics team. You will work on real-world financial datasets to build predictive models and generate actionable insights.
+
+Responsibilities:
+• Build and evaluate ML models (classification, regression, clustering)
+• Write clean Python code for data wrangling, EDA, and feature engineering
+• Collaborate with analysts using SQL to pull and prepare data
+• Present findings via dashboards or reports to non-technical stakeholders
+• Use version control (Git) for project collaboration
+
+Requirements:
+• Proficiency in Python (pandas, NumPy, scikit-learn)
+• Working knowledge of SQL
+• Familiarity with ML concepts and model evaluation (precision, recall, AUC-ROC)
+• Strong analytical and communication skills
+• Degree in CS, Statistics, Data Science, or related field
+• Nice to have: experience with NLP, time-series analysis, or financial data
