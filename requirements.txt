@@ -1,7 +1,7 @@
+streamlit
 sentence-transformers
 scikit-learn
-pandas
 numpy
 PyPDF2
 python-docx
-streamlit
+pickle5
