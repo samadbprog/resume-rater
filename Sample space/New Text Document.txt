@@ -1,0 +1,52 @@
+Role Summary
+The Informatica PC &amp; IICS Support Engineer is responsible for providing L2 production
+support for ETL integrations built on Informatica PowerCenter and Informatica Intelligent
+Cloud Services (IICS). The role includes monitoring, scheduling, troubleshooting, and
+resolving batch and real-time integration issues using UC4 / AppWorx scheduling
+tools, ensuring smooth data operations across enterprise systems.
+
+SKILL SETS REQUIRED:
+ 3+ Years of experience required as an Informatica Power Centre/IICS
+ 3+ years of experience required as UC4 / AppWorx scheduling tools.
+ Very Strong Experience with Linux/UNIX and Windows Operating Systems and
+associated commands.
+ Knowledges of Middleware concepts.
+ Knowledge of writing Shell Scripts or Python.
+ Knowledge of API and working knowledge on postman and other relevant tools.
+ Strong knowledge of relational database design and support, including the support of
+large SQL based enterprise software systems.
+ Excellent analytical and problem-solving skills.
+ Very strong clients and vendor communication and inter-personal skills. 
+ Inter team collaboration and communication to make the job done.
+ Should be able to lead the team and able to manage the client as well.
+ROLES &amp; RESPONSIBILITIES:
+ Complete installation and configuration of IICS and PowerCenter platform.
+ Setting up scheduling tools (Automic/ControlM) with IICS.
+ Access management, roles and groups and ldap setup
+ Maintaining high availability of Informatica platform.
+ Informatica IICS vendor release support.
+ Informatica Vendor management – Case creations and working with them to solve
+product and other related issues.
+ Provide L2/L3 production support for Informatica PowerCenter and IICS mappings,
+workflows, and taskflows
+
+ Monitor, manage, and troubleshoot batch schedules and dependencies using UC4 /
+AppWorx
+
+
+ Investigate and resolve ETL job failures, performance issues, and data discrepancies
+
+ Perform root cause analysis (RCA) and provide permanent fixes for recurring issues
+
+ Coordinate with source system, downstream, and infrastructure teams for issue
+resolution
+
+ Handle re-runs, restarts, backfills, and data correction activities as per SOPs
+
+ Ensure adherence to SLA, incident, problem, and change management processes
+
+ Support PowerCenter to IICS migration and cloud-based integrations
+
+ Monitor file arrivals, validate source data, and manage exceptions
+
+ Maintain operational documentation, run books, and support dashboards.

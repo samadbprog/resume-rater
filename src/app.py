@@ -17,14 +17,23 @@ DEPTH_INDICATORS = {
     'improved', 'fine-tuned', 'pipeline', 'deployed', 'kaggle'
 }
 
+# ---- SCORING VERSION TOGGLE ----
+VERSION = "B"  # Change to "B" to test Version B
+# --------------------------------
+
 # Hybrid blend weights
 BLEND_MODEL  = 0.30
 BLEND_RULE   = 0.70
 
 # Rule-based sub-weights (must sum to 1.0)
-W_SEMANTIC   = 0.20
-W_KEYWORD    = 0.40
-W_DEPTH      = 0.40
+if VERSION == "A":
+    W_SEMANTIC = 0.40
+    W_KEYWORD  = 0.20
+    W_DEPTH    = 0.40
+elif VERSION == "B":
+    W_SEMANTIC = 0.35
+    W_KEYWORD  = 0.30
+    W_DEPTH    = 0.35
 
 # ── Loaders ───────────────────────────────────────────────────────────────────
 @st.cache_resource
@@ -102,6 +111,17 @@ def compute_score(model_bundle, embedder, resume_text: str, jd_text: str) -> dic
         "final_raw"      : round(final_score, 4),
     }
 
+# ── Score Label ───────────────────────────────────────────────────────────────
+def get_score_label(score: float):
+    if score < 4.0:
+        return "Poor Match ❌", "red"
+    elif score < 6.5:
+        return "Moderate Match 🔶", "orange"
+    elif score < 8.0:
+        return "Good Match 👍", "blue"
+    else:
+        return "Excellent Match 🌟", "green"
+
 # ── Feedback ──────────────────────────────────────────────────────────────────
 def generate_feedback(scores: dict) -> list[str]:
     fb = []
@@ -136,7 +156,8 @@ def generate_feedback(scores: dict) -> list[str]:
 def main():
     st.set_page_config(page_title="AI Resume Scorer", page_icon="📄", layout="centered")
     st.title("📄 AI Resume Scorer")
-    st.caption("Hybrid ML + Rule-Based scoring engine")
+    st.caption(f"Hybrid ML + Rule-Based scoring engine — Version {VERSION} "
+               f"(Sem {W_SEMANTIC} | Key {W_KEYWORD} | Depth {W_DEPTH})")
 
     # Load resources
     try:
@@ -184,15 +205,7 @@ def main():
         # ── Score Display ──────────────────────────────────────────────────
         st.markdown("---")
         score = scores["display_score"]
-
-        if score >= 7.5:
-            label, colour = "Excellent Match 🌟", "green"
-        elif score >= 5.5:
-            label, colour = "Good Match 👍", "orange"
-        elif score >= 3.5:
-            label, colour = "Moderate Match 🔶", "orange"
-        else:
-            label, colour = "Poor Match ❌", "red"
+        label, colour = get_score_label(score)
 
         st.markdown(
             f"<h1 style='text-align:center; color:{colour};'>{score} / 10</h1>"
@@ -220,8 +233,8 @@ def main():
         st.subheader("🧮 Scoring Formula")
         st.markdown(
             f"""
-            **Rule Score** = (0.20 × Semantic) + (0.40 × Keyword) + (0.40 × Depth)
-            = (0.20 × {scores['semantic']}) + (0.40 × {scores['keyword_overlap']}) + (0.40 × {scores['depth_score']})
+            **Rule Score** = ({W_SEMANTIC} × Semantic) + ({W_KEYWORD} × Keyword) + ({W_DEPTH} × Depth)
+            = ({W_SEMANTIC} × {scores['semantic']}) + ({W_KEYWORD} × {scores['keyword_overlap']}) + ({W_DEPTH} × {scores['depth_score']})
             = **{scores['rule_score']}**
 
             **Final Score** = (0.30 × Model) + (0.70 × Rule)
