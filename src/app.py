@@ -9,7 +9,7 @@ import docx
 import io
 
 # ── Config ────────────────────────────────────────────────────────────────────
-MODEL_PATH = "model.pkl"
+MODEL_PATH  = "model.pkl"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 
 DEPTH_INDICATORS = {
@@ -17,23 +17,37 @@ DEPTH_INDICATORS = {
     'improved', 'fine-tuned', 'pipeline', 'deployed', 'kaggle'
 }
 
-# ---- SCORING VERSION TOGGLE ----
-VERSION = "B"  # Change to "B" to test Version B
-# --------------------------------
+# Hybrid blend weights (applied independently to all 3 versions)
+BLEND_MODEL = 0.30
+BLEND_RULE  = 0.70
 
-# Hybrid blend weights
-BLEND_MODEL  = 0.30
-BLEND_RULE   = 0.70
-
-# Rule-based sub-weights (must sum to 1.0)
-if VERSION == "A":
-    W_SEMANTIC = 0.40
-    W_KEYWORD  = 0.20
-    W_DEPTH    = 0.40
-elif VERSION == "B":
-    W_SEMANTIC = 0.35
-    W_KEYWORD  = 0.30
-    W_DEPTH    = 0.35
+# ── Version Definitions ───────────────────────────────────────────────────────
+VERSIONS = {
+    "A": {
+        "label"     : "ATS Match Score",
+        "emoji"     : "🤖",
+        "semantic"  : 0.10,
+        "keyword"   : 0.70,
+        "depth"     : 0.20,
+        "avg_weight": 0.20,   # contribution to final weighted average
+    },
+    "B": {
+        "label"     : "Overall Fit Score",
+        "emoji"     : "🎯",
+        "semantic"  : 0.35,
+        "keyword"   : 0.30,
+        "depth"     : 0.35,
+        "avg_weight": 0.40,
+    },
+    "C": {
+        "label"     : "Candidate Quality Score",
+        "emoji"     : "🌟",
+        "semantic"  : 0.40,
+        "keyword"   : 0.20,
+        "depth"     : 0.40,
+        "avg_weight": 0.40,
+    },
+}
 
 # ── Loaders ───────────────────────────────────────────────────────────────────
 @st.cache_resource
@@ -83,35 +97,57 @@ def get_depth_score(resume_text: str) -> float:
         return 0.33
     return 0.00
 
-# ── Scoring ───────────────────────────────────────────────────────────────────
-def compute_score(model_bundle, embedder, resume_text: str, jd_text: str) -> dict:
-    # Features
+# ── Per-Version Scorer ────────────────────────────────────────────────────────
+def compute_version_score(model_bundle, sem: float, kw: float,
+                          depth: float, ver: dict) -> dict:
+    # ML model score
+    features    = np.array([[sem, kw, depth]])
+    model_score = float(np.clip(model_bundle["model"].predict(features)[0], 0, 1))
+
+    # Rule-based score
+    rule_score  = (ver["semantic"] * sem) + (ver["keyword"] * kw) + (ver["depth"] * depth)
+
+    # Hybrid blend
+    final_raw   = (BLEND_MODEL * model_score) + (BLEND_RULE * rule_score)
+    final_raw   = float(np.clip(final_raw, 0, 1))
+
+    return {
+        "model_score": round(model_score, 4),
+        "rule_score" : round(rule_score,  4),
+        "final_raw"  : round(final_raw,   4),
+        "out_of_100" : round(final_raw * 100, 1),
+    }
+
+# ── Master Scorer ─────────────────────────────────────────────────────────────
+def compute_all_scores(model_bundle, embedder,
+                       resume_text: str, jd_text: str) -> dict:
+    # Shared features (computed once)
     sem   = get_semantic_similarity(embedder, resume_text, jd_text)
     kw    = get_keyword_overlap(resume_text, jd_text)
     depth = get_depth_score(resume_text)
 
-    # ML model score
-    features     = np.array([[sem, kw, depth]])
-    model_score  = float(np.clip(model_bundle["model"].predict(features)[0], 0, 1))
+    results = {}
+    for ver_key, ver_cfg in VERSIONS.items():
+        results[ver_key] = compute_version_score(
+            model_bundle, sem, kw, depth, ver_cfg
+        )
 
-    # Rule-based score (weighted formula)
-    rule_score   = (W_SEMANTIC * sem) + (W_KEYWORD * kw) + (W_DEPTH * depth)
-
-    # Hybrid blend
-    final_score  = (BLEND_MODEL * model_score) + (BLEND_RULE * rule_score)
-    display      = round(float(np.clip(final_score, 0, 1)) * 10, 1)
+    # Weighted average of the three out_of_100 scores → final /10
+    weighted_avg = sum(
+        results[k]["out_of_100"] * VERSIONS[k]["avg_weight"]
+        for k in VERSIONS
+    )
+    final_score = round(float(np.clip(weighted_avg / 10, 0, 10)), 1)
 
     return {
-        "display_score"  : display,
-        "semantic"       : round(sem,   4),
-        "keyword_overlap": round(kw,    4),
-        "depth_score"    : round(depth, 4),
-        "model_score"    : round(model_score, 4),
-        "rule_score"     : round(rule_score,  4),
-        "final_raw"      : round(final_score, 4),
+        "versions"   : results,
+        "sem"        : round(sem,   4),
+        "kw"         : round(kw,    4),
+        "depth"      : round(depth, 4),
+        "final_score": final_score,       # out of 10
     }
 
-# ── Score Label ───────────────────────────────────────────────────────────────
+# ── Match Label ───────────────────────────────────────────────────────────────
 def get_score_label(score: float):
     if score < 4.0:
         return "Poor Match ❌", "red"
@@ -123,29 +159,26 @@ def get_score_label(score: float):
         return "Excellent Match 🌟", "green"
 
 # ── Feedback ──────────────────────────────────────────────────────────────────
-def generate_feedback(scores: dict) -> list[str]:
+def generate_feedback(sem: float, kw: float, depth: float) -> list:
     fb = []
 
-    # Semantic
-    if scores["semantic"] < 0.4:
+    if sem < 0.4:
         fb.append("⚠️ Low semantic similarity — your resume language doesn't closely match the job description.")
-    elif scores["semantic"] > 0.7:
+    elif sem > 0.7:
         fb.append("✅ High semantic similarity — strong language alignment with the job description.")
     else:
         fb.append("🔶 Moderate semantic similarity — consider mirroring more JD language in your resume.")
 
-    # Keyword
-    if scores["keyword_overlap"] < 0.3:
+    if kw < 0.3:
         fb.append("⚠️ Low keyword coverage — many critical JD keywords are missing from your resume.")
-    elif scores["keyword_overlap"] >= 0.6:
+    elif kw >= 0.6:
         fb.append("✅ Strong keyword coverage — great match on critical job keywords.")
     else:
         fb.append("🔶 Moderate keyword coverage — add more role-specific keywords from the JD.")
 
-    # Depth
-    if scores["depth_score"] == 0.0:
+    if depth == 0.0:
         fb.append("⚠️ Low depth — add quantified achievements, metrics, or technical specifics.")
-    elif scores["depth_score"] >= 0.67:
+    elif depth >= 0.67:
         fb.append("✅ Strong depth — your resume demonstrates specific, measurable impact.")
     else:
         fb.append("🔶 Moderate depth — include more metrics or technical depth indicators.")
@@ -156,8 +189,7 @@ def generate_feedback(scores: dict) -> list[str]:
 def main():
     st.set_page_config(page_title="AI Resume Scorer", page_icon="📄", layout="centered")
     st.title("📄 AI Resume Scorer")
-    st.caption(f"Hybrid ML + Rule-Based scoring engine — Version {VERSION} "
-               f"(Sem {W_SEMANTIC} | Key {W_KEYWORD} | Depth {W_DEPTH})")
+    st.caption("Hybrid ML + Rule-Based · Three-Lens Scoring Engine")
 
     # Load resources
     try:
@@ -167,15 +199,15 @@ def main():
         st.error(f"Failed to load model or embedder: {e}")
         return
 
-    # Training metrics (if stored in bundle)
+    # Training metrics
     with st.expander("📊 Model Training Metrics"):
         metrics = model_bundle.get("metrics", {})
         if metrics:
             col1, col2, col3 = st.columns(3)
-            col1.metric("Test MAE",  f'{metrics.get("test_mae",  "N/A"):.4f}')
-            col2.metric("Test R²",   f'{metrics.get("test_r2",   "N/A"):.4f}')
-            col3.metric("CV R² Mean",f'{metrics.get("cv_r2_mean","N/A"):.4f} ± '
-                                     f'{metrics.get("cv_r2_std", "N/A"):.4f}')
+            col1.metric("Test MAE",   f'{metrics.get("test_mae",   "N/A"):.4f}')
+            col2.metric("Test R²",    f'{metrics.get("test_r2",    "N/A"):.4f}')
+            col3.metric("CV R² Mean", f'{metrics.get("cv_r2_mean", "N/A"):.4f} ± '
+                                      f'{metrics.get("cv_r2_std",  "N/A"):.4f}')
         else:
             st.info("No training metrics found in model bundle.")
 
@@ -200,53 +232,94 @@ def main():
                 st.error(str(e))
                 return
 
-            scores = compute_score(model_bundle, embedder, resume_text, jd_text)
+            data = compute_all_scores(model_bundle, embedder, resume_text, jd_text)
 
-        # ── Score Display ──────────────────────────────────────────────────
+        # ── Final Score Display ────────────────────────────────────────────
         st.markdown("---")
-        score = scores["display_score"]
-        label, colour = get_score_label(score)
+        final  = data["final_score"]
+        label, colour = get_score_label(final)
 
         st.markdown(
-            f"<h1 style='text-align:center; color:{colour};'>{score} / 10</h1>"
+            f"<h1 style='text-align:center; color:{colour};'>{final} / 10</h1>"
             f"<h3 style='text-align:center;'>{label}</h3>",
             unsafe_allow_html=True
         )
-
-        # ── Score Breakdown ────────────────────────────────────────────────
-        st.markdown("---")
-        st.subheader("📐 Score Breakdown")
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("🧠 Semantic",  scores["semantic"])
-        col2.metric("🔑 Keywords",  scores["keyword_overlap"])
-        col3.metric("📏 Depth",     scores["depth_score"])
-
-        st.markdown("---")
-        col4, col5, col6 = st.columns(3)
-        col4.metric("🤖 Model Score", scores["model_score"])
-        col5.metric("📐 Rule Score",  scores["rule_score"])
-        col6.metric("🏁 Final Raw",   scores["final_raw"])
-
-        # ── Formula Display ────────────────────────────────────────────────
-        st.markdown("---")
-        st.subheader("🧮 Scoring Formula")
-        st.markdown(
-            f"""
-            **Rule Score** = ({W_SEMANTIC} × Semantic) + ({W_KEYWORD} × Keyword) + ({W_DEPTH} × Depth)
-            = ({W_SEMANTIC} × {scores['semantic']}) + ({W_KEYWORD} × {scores['keyword_overlap']}) + ({W_DEPTH} × {scores['depth_score']})
-            = **{scores['rule_score']}**
-
-            **Final Score** = (0.30 × Model) + (0.70 × Rule)
-            = (0.30 × {scores['model_score']}) + (0.70 × {scores['rule_score']})
-            = **{scores['final_raw']}** → **{score} / 10**
-            """
+        st.caption(
+            "Final score = weighted average of the three lenses "
+            "(ATS 20% · Overall Fit 40% · Candidate Quality 40%)"
         )
+
+        # ── Three-Lens Score Cards ─────────────────────────────────────────
+        st.markdown("---")
+        st.subheader("🔭 Three-Lens Breakdown")
+
+        col_a, col_b, col_c = st.columns(3)
+        cols = [col_a, col_b, col_c]
+
+        for idx, (ver_key, ver_cfg) in enumerate(VERSIONS.items()):
+            ver_result = data["versions"][ver_key]
+            s = ver_result["out_of_100"]
+
+            # Colour band per score
+            if s >= 75:
+                s_colour = "green"
+            elif s >= 55:
+                s_colour = "orange"
+            else:
+                s_colour = "red"
+
+            with cols[idx]:
+                st.markdown(
+                    f"<div style='text-align:center;'>"
+                    f"<p style='font-size:14px; margin-bottom:2px;'>"
+                    f"{ver_cfg['emoji']} <b>{ver_cfg['label']}</b></p>"
+                    f"<p style='font-size:36px; font-weight:bold; color:{s_colour}; margin:0;'>"
+                    f"{s}</p>"
+                    f"<p style='font-size:12px; color:grey; margin-top:2px;'>out of 100</p>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+        # ── Per-Version Formula Detail ─────────────────────────────────────
+        st.markdown("---")
+        with st.expander("🧮 Detailed Score Breakdown per Lens"):
+            for ver_key, ver_cfg in VERSIONS.items():
+                vr = data["versions"][ver_key]
+                st.markdown(f"### {ver_cfg['emoji']} {ver_cfg['label']} (Version {ver_key})")
+                st.markdown(
+                    f"**Weights →** Semantic `{ver_cfg['semantic']}` · "
+                    f"Keyword `{ver_cfg['keyword']}` · Depth `{ver_cfg['depth']}`\n\n"
+                    f"**Rule Score** = "
+                    f"({ver_cfg['semantic']} × {data['sem']}) + "
+                    f"({ver_cfg['keyword']} × {data['kw']}) + "
+                    f"({ver_cfg['depth']} × {data['depth']}) "
+                    f"= **{vr['rule_score']}**\n\n"
+                    f"**ML Model Score** = **{vr['model_score']}**\n\n"
+                    f"**Hybrid** = (0.30 × {vr['model_score']}) + (0.70 × {vr['rule_score']}) "
+                    f"= **{vr['final_raw']}** → **{vr['out_of_100']} / 100**"
+                )
+                st.markdown("---")
+
+            st.markdown(
+                f"**Final Score** = "
+                f"(0.20 × {data['versions']['A']['out_of_100']}) + "
+                f"(0.40 × {data['versions']['B']['out_of_100']}) + "
+                f"(0.40 × {data['versions']['C']['out_of_100']}) "
+                f"= **{final * 10:.1f} / 100** → **{final} / 10**"
+            )
+
+        # ── Raw Feature Scores ─────────────────────────────────────────────
+        st.markdown("---")
+        st.subheader("📐 Raw Feature Scores")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("🧠 Semantic Similarity", data["sem"])
+        c2.metric("🔑 Keyword Overlap",     data["kw"])
+        c3.metric("📏 Depth Score",         data["depth"])
 
         # ── Feedback ───────────────────────────────────────────────────────
         st.markdown("---")
         st.subheader("💬 Feedback")
-        for msg in generate_feedback(scores):
+        for msg in generate_feedback(data["sem"], data["kw"], data["depth"]):
             st.markdown(msg)
 
 if __name__ == "__main__":
