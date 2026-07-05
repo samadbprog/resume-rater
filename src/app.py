@@ -11,7 +11,7 @@ from huggingface_hub import hf_hub_download
 
 # ── Config ────────────────────────────────────────────────────────────────────
 # Hugging Face model info
-REPO_ID = "Golden4ng/resume-scorer-model"
+REPO_ID = "Goldenf4ng/resume-scorer-model"
 FILENAME = "model.pkl"
 
 EMBED_MODEL = "all-MiniLM-L6-v2"
