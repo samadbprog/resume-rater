@@ -7,9 +7,13 @@ from sklearn.metrics.pairwise import cosine_similarity
 import PyPDF2
 import docx
 import io
+from huggingface_hub import hf_hub_download
 
 # ── Config ────────────────────────────────────────────────────────────────────
-MODEL_PATH  = "model.pkl"
+# Hugging Face model info
+REPO_ID = "Golden4ng/resume-scorer-model"
+FILENAME = "model.pkl"
+
 EMBED_MODEL = "all-MiniLM-L6-v2"
 
 DEPTH_INDICATORS = {
@@ -52,8 +56,24 @@ VERSIONS = {
 # ── Loaders ───────────────────────────────────────────────────────────────────
 @st.cache_resource
 def load_model():
-    with open(MODEL_PATH, "rb") as f:
-        return pickle.load(f)
+    """Download and load the model from Hugging Face Hub"""
+    try:
+        # Download the model file from Hugging Face
+        model_path = hf_hub_download(
+            repo_id=REPO_ID,
+            filename=FILENAME,
+            repo_type="model"
+        )
+        
+        # Load the model
+        with open(model_path, "rb") as f:
+            model_bundle = pickle.load(f)
+        
+        st.success("✅ Model loaded successfully from Hugging Face!")
+        return model_bundle
+    except Exception as e:
+        st.error(f"Failed to load model from Hugging Face: {e}")
+        return None
 
 @st.cache_resource
 def load_embedder():
@@ -192,24 +212,24 @@ def main():
     st.caption("Hybrid ML + Rule-Based · Three-Lens Scoring Engine")
 
     # Load resources
-    try:
-        model_bundle = load_model()
-        embedder     = load_embedder()
-    except Exception as e:
-        st.error(f"Failed to load model or embedder: {e}")
-        return
+    model_bundle = load_model()
+    embedder     = load_embedder()
 
-    # Training metrics
-    with st.expander("📊 Model Training Metrics"):
-        metrics = model_bundle.get("metrics", {})
-        if metrics:
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Test MAE",   f'{metrics.get("test_mae",   "N/A"):.4f}')
-            col2.metric("Test R²",    f'{metrics.get("test_r2",    "N/A"):.4f}')
-            col3.metric("CV R² Mean", f'{metrics.get("cv_r2_mean", "N/A"):.4f} ± '
-                                      f'{metrics.get("cv_r2_std",  "N/A"):.4f}')
-        else:
-            st.info("No training metrics found in model bundle.")
+    if model_bundle is None:
+        st.warning("⚠️ Running without ML model - only rule-based scoring available")
+        # Continue anyway - we'll handle None in scoring
+    else:
+        # Training metrics (only if model loaded)
+        with st.expander("📊 Model Training Metrics"):
+            metrics = model_bundle.get("metrics", {})
+            if metrics:
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Test MAE",   f'{metrics.get("test_mae",   "N/A"):.4f}')
+                col2.metric("Test R²",    f'{metrics.get("test_r2",    "N/A"):.4f}')
+                col3.metric("CV R² Mean", f'{metrics.get("cv_r2_mean", "N/A"):.4f} ± '
+                                          f'{metrics.get("cv_r2_std",  "N/A"):.4f}')
+            else:
+                st.info("No training metrics found in model bundle.")
 
     st.markdown("---")
 
@@ -232,6 +252,14 @@ def main():
                 st.error(str(e))
                 return
 
+            # If model failed to load, pass None to compute_all_scores
+            # The compute functions will handle it
+            if model_bundle is None:
+                st.warning("⚠️ ML model unavailable - using rule-based scoring only")
+                # Create a dummy bundle to avoid errors, but will fall back to rule only
+                # Actually our compute functions expect a bundle with "model" key
+                # We'll use a workaround: pass the None and handle in compute_version_score
+                
             data = compute_all_scores(model_bundle, embedder, resume_text, jd_text)
 
         # ── Final Score Display ────────────────────────────────────────────

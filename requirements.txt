@@ -4,4 +4,4 @@ scikit-learn
 numpy
 PyPDF2
 python-docx
-
+huggingface-hub
