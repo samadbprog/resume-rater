@@ -1,6 +1,7 @@
 import streamlit as st
 import pickle
 import numpy as np
+import requests
 from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -58,22 +59,36 @@ VERSIONS = {
 def load_model():
     """Download and load the model from Hugging Face Hub"""
     try:
-        # Download the model file from Hugging Face
+        # Try hf_hub_download first with token=False for public repo
         model_path = hf_hub_download(
             repo_id=REPO_ID,
             filename=FILENAME,
-            repo_type="model"
+            repo_type="model",
+            token=False  # Explicitly no token for public repo
         )
         
-        # Load the model
         with open(model_path, "rb") as f:
             model_bundle = pickle.load(f)
         
         st.success("✅ Model loaded successfully from Hugging Face!")
         return model_bundle
+        
     except Exception as e:
-        st.error(f"Failed to load model from Hugging Face: {e}")
-        return None
+        st.warning(f"hf_hub_download failed: {e}. Trying direct download...")
+        
+        try:
+            # Fallback: direct download
+            url = f"https://huggingface.co/{REPO_ID}/resolve/main/{FILENAME}"
+            response = requests.get(url)
+            response.raise_for_status()
+            
+            model_bundle = pickle.loads(response.content)
+            st.success("✅ Model loaded successfully via direct download!")
+            return model_bundle
+            
+        except Exception as e2:
+            st.error(f"Failed to load model: {e2}")
+            return None
 
 @st.cache_resource
 def load_embedder():
@@ -120,30 +135,35 @@ def get_depth_score(resume_text: str) -> float:
 # ── Per-Version Scorer ────────────────────────────────────────────────────────
 def compute_version_score(model_bundle, sem: float, kw: float,
                           depth: float, ver: dict) -> dict:
-    # ML model score
-    features    = np.array([[sem, kw, depth]])
-    model_score = float(np.clip(model_bundle["model"].predict(features)[0], 0, 1))
-
-    # Rule-based score
-    rule_score  = (ver["semantic"] * sem) + (ver["keyword"] * kw) + (ver["depth"] * depth)
-
-    # Hybrid blend
-    final_raw   = (BLEND_MODEL * model_score) + (BLEND_RULE * rule_score)
-    final_raw   = float(np.clip(final_raw, 0, 1))
-
+    # Rule-based score (always computed)
+    rule_score = (ver["semantic"] * sem) + (ver["keyword"] * kw) + (ver["depth"] * depth)
+    
+    # ML model score (only if model exists)
+    if model_bundle is not None:
+        features = np.array([[sem, kw, depth]])
+        model_score = float(np.clip(model_bundle["model"].predict(features)[0], 0, 1))
+        # Hybrid blend
+        final_raw = (BLEND_MODEL * model_score) + (BLEND_RULE * rule_score)
+    else:
+        # Rule-based only
+        model_score = 0.0
+        final_raw = rule_score
+    
+    final_raw = float(np.clip(final_raw, 0, 1))
+    
     return {
         "model_score": round(model_score, 4),
-        "rule_score" : round(rule_score,  4),
-        "final_raw"  : round(final_raw,   4),
-        "out_of_100" : round(final_raw * 100, 1),
+        "rule_score": round(rule_score, 4),
+        "final_raw": round(final_raw, 4),
+        "out_of_100": round(final_raw * 100, 1),
     }
 
 # ── Master Scorer ─────────────────────────────────────────────────────────────
 def compute_all_scores(model_bundle, embedder,
                        resume_text: str, jd_text: str) -> dict:
     # Shared features (computed once)
-    sem   = get_semantic_similarity(embedder, resume_text, jd_text)
-    kw    = get_keyword_overlap(resume_text, jd_text)
+    sem = get_semantic_similarity(embedder, resume_text, jd_text)
+    kw = get_keyword_overlap(resume_text, jd_text)
     depth = get_depth_score(resume_text)
 
     results = {}
@@ -160,11 +180,11 @@ def compute_all_scores(model_bundle, embedder,
     final_score = round(float(np.clip(weighted_avg / 10, 0, 10)), 1)
 
     return {
-        "versions"   : results,
-        "sem"        : round(sem,   4),
-        "kw"         : round(kw,    4),
-        "depth"      : round(depth, 4),
-        "final_score": final_score,       # out of 10
+        "versions": results,
+        "sem": round(sem, 4),
+        "kw": round(kw, 4),
+        "depth": round(depth, 4),
+        "final_score": final_score,  # out of 10
     }
 
 # ── Match Label ───────────────────────────────────────────────────────────────
@@ -217,7 +237,6 @@ def main():
 
     if model_bundle is None:
         st.warning("⚠️ Running without ML model - only rule-based scoring available")
-        # Continue anyway - we'll handle None in scoring
     else:
         # Training metrics (only if model loaded)
         with st.expander("📊 Model Training Metrics"):
@@ -252,14 +271,10 @@ def main():
                 st.error(str(e))
                 return
 
-            # If model failed to load, pass None to compute_all_scores
-            # The compute functions will handle it
+            # Show warning if model is not available
             if model_bundle is None:
-                st.warning("⚠️ ML model unavailable - using rule-based scoring only")
-                # Create a dummy bundle to avoid errors, but will fall back to rule only
-                # Actually our compute functions expect a bundle with "model" key
-                # We'll use a workaround: pass the None and handle in compute_version_score
-                
+                st.info("ℹ️ Using rule-based scoring only (ML model unavailable)")
+
             data = compute_all_scores(model_bundle, embedder, resume_text, jd_text)
 
         # ── Final Score Display ────────────────────────────────────────────
