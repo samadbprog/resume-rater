@@ -1,17 +1,15 @@
 import streamlit as st
 import pickle
 import numpy as np
-import requests
 from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import PyPDF2
 import docx
 import io
-from huggingface_hub import hf_hub_download
 
 # ── Config ────────────────────────────────────────────────────────────────────
-# Hugging Face model info
+# Hugging Face model info (kept for reference but not used)
 REPO_ID = "Goldenf4ng/resume-scorer-model"
 FILENAME = "model.pkl"
 
@@ -34,7 +32,7 @@ VERSIONS = {
         "semantic"  : 0.10,
         "keyword"   : 0.70,
         "depth"     : 0.20,
-        "avg_weight": 0.20,   # contribution to final weighted average
+        "avg_weight": 0.20,
     },
     "B": {
         "label"     : "Overall Fit Score",
@@ -57,81 +55,9 @@ VERSIONS = {
 # ── Loaders ───────────────────────────────────────────────────────────────────
 @st.cache_resource
 def load_model():
-    """Download and load the model from Hugging Face Hub with multiple fallback methods"""
-    try:
-        # Download the model file from Hugging Face
-        model_path = hf_hub_download(
-            repo_id=REPO_ID,
-            filename=FILENAME,
-            repo_type="model",
-            token=False
-        )
-        
-        # Try multiple loading methods
-        model_bundle = None
-        errors = []
-        
-        # Method 1: Standard pickle
-        try:
-            with open(model_path, "rb") as f:
-                model_bundle = pickle.load(f)
-            st.success("✅ Model loaded successfully with pickle!")
-            return model_bundle
-        except Exception as e:
-            errors.append(f"pickle: {e}")
-        
-        # Method 2: joblib
-        try:
-            import joblib
-            model_bundle = joblib.load(model_path)
-            st.success("✅ Model loaded successfully with joblib!")
-            return model_bundle
-        except Exception as e:
-            errors.append(f"joblib: {e}")
-        
-        # Method 3: numpy (if model was saved as numpy array)
-        try:
-            model_bundle = np.load(model_path, allow_pickle=True).item()
-            st.success("✅ Model loaded successfully with numpy!")
-            return model_bundle
-        except Exception as e:
-            errors.append(f"numpy: {e}")
-        
-        # If all methods failed
-        st.error(f"All loading methods failed: {', '.join(errors)}")
-        return None
-        
-    except Exception as e:
-        st.warning(f"hf_hub_download failed: {e}. Trying direct download...")
-        
-        try:
-            # Fallback: direct download
-            url = f"https://huggingface.co/{REPO_ID}/resolve/main/{FILENAME}"
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-            
-            # Try loading from bytes with different methods
-            try:
-                model_bundle = pickle.loads(response.content)
-                st.success("✅ Model loaded successfully via direct download (pickle)!")
-                return model_bundle
-            except:
-                try:
-                    import joblib
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl') as tmp:
-                        tmp.write(response.content)
-                        tmp_path = tmp.name
-                    model_bundle = joblib.load(tmp_path)
-                    st.success("✅ Model loaded successfully via direct download (joblib)!")
-                    return model_bundle
-                except Exception as e2:
-                    st.error(f"Failed to load model from direct download: {e2}")
-                    return None
-            
-        except Exception as e2:
-            st.error(f"Failed to load model: {e2}")
-            return None
+    """Skip loading ML model - use rule-based scoring only"""
+    st.info("ℹ️ Using rule-based scoring only (ML model disabled for compatibility)")
+    return None
 
 @st.cache_resource
 def load_embedder():
@@ -157,7 +83,7 @@ def get_semantic_similarity(embedder, resume_text: str, jd_text: str) -> float:
 def get_keyword_overlap(resume_text: str, jd_text: str, top_n: int = 20) -> float:
     tfidf = TfidfVectorizer(ngram_range=(1, 2), max_features=200, stop_words="english")
     tfidf.fit([jd_text])
-    scores  = dict(zip(tfidf.get_feature_names_out(),
+    scores = dict(zip(tfidf.get_feature_names_out(),
                        tfidf.transform([jd_text]).toarray()[0]))
     top_kws = sorted(scores, key=scores.get, reverse=True)[:top_n]
     resume_lower = resume_text.lower()
@@ -178,46 +104,12 @@ def get_depth_score(resume_text: str) -> float:
 # ── Per-Version Scorer ────────────────────────────────────────────────────────
 def compute_version_score(model_bundle, sem: float, kw: float,
                           depth: float, ver: dict) -> dict:
-    # Rule-based score (always computed)
+    # Rule-based score only (model_bundle is always None)
     rule_score = (ver["semantic"] * sem) + (ver["keyword"] * kw) + (ver["depth"] * depth)
-    
-    # ML model score (only if model exists)
-    if model_bundle is not None:
-        try:
-            features = np.array([[sem, kw, depth]])
-            # Handle different model types
-            if hasattr(model_bundle, "predict"):
-                # It's a scikit-learn model
-                model_score = float(np.clip(model_bundle.predict(features)[0], 0, 1))
-            elif isinstance(model_bundle, dict) and "model" in model_bundle:
-                # It's a bundle dictionary
-                model_score = float(np.clip(model_bundle["model"].predict(features)[0], 0, 1))
-            else:
-                # Unknown format - fallback to rule-based
-                model_score = 0.0
-                final_raw = rule_score
-                return {
-                    "model_score": 0.0,
-                    "rule_score": round(rule_score, 4),
-                    "final_raw": round(rule_score, 4),
-                    "out_of_100": round(rule_score * 100, 1),
-                }
-            
-            # Hybrid blend
-            final_raw = (BLEND_MODEL * model_score) + (BLEND_RULE * rule_score)
-        except Exception as e:
-            st.warning(f"ML model prediction failed: {e}. Using rule-based only.")
-            model_score = 0.0
-            final_raw = rule_score
-    else:
-        # Rule-based only
-        model_score = 0.0
-        final_raw = rule_score
-    
-    final_raw = float(np.clip(final_raw, 0, 1))
+    final_raw = float(np.clip(rule_score, 0, 1))
     
     return {
-        "model_score": round(model_score, 4),
+        "model_score": 0.0,
         "rule_score": round(rule_score, 4),
         "final_raw": round(final_raw, 4),
         "out_of_100": round(final_raw * 100, 1),
@@ -226,7 +118,6 @@ def compute_version_score(model_bundle, sem: float, kw: float,
 # ── Master Scorer ─────────────────────────────────────────────────────────────
 def compute_all_scores(model_bundle, embedder,
                        resume_text: str, jd_text: str) -> dict:
-    # Shared features (computed once)
     sem = get_semantic_similarity(embedder, resume_text, jd_text)
     kw = get_keyword_overlap(resume_text, jd_text)
     depth = get_depth_score(resume_text)
@@ -237,7 +128,6 @@ def compute_all_scores(model_bundle, embedder,
             model_bundle, sem, kw, depth, ver_cfg
         )
 
-    # Weighted average of the three out_of_100 scores → final /10
     weighted_avg = sum(
         results[k]["out_of_100"] * VERSIONS[k]["avg_weight"]
         for k in VERSIONS
@@ -249,7 +139,7 @@ def compute_all_scores(model_bundle, embedder,
         "sem": round(sem, 4),
         "kw": round(kw, 4),
         "depth": round(depth, 4),
-        "final_score": final_score,  # out of 10
+        "final_score": final_score,
     }
 
 # ── Match Label ───────────────────────────────────────────────────────────────
@@ -298,32 +188,13 @@ def main():
 
     # Load resources
     model_bundle = load_model()
-    embedder     = load_embedder()
-
-    if model_bundle is None:
-        st.warning("⚠️ Running without ML model - only rule-based scoring available")
-    else:
-        # Training metrics (only if model loaded)
-        with st.expander("📊 Model Training Metrics"):
-            # Check if model is a bundle with metrics
-            if isinstance(model_bundle, dict) and "metrics" in model_bundle:
-                metrics = model_bundle.get("metrics", {})
-                if metrics:
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("Test MAE",   f'{metrics.get("test_mae",   "N/A"):.4f}')
-                    col2.metric("Test R²",    f'{metrics.get("test_r2",    "N/A"):.4f}')
-                    col3.metric("CV R² Mean", f'{metrics.get("cv_r2_mean", "N/A"):.4f} ± '
-                                              f'{metrics.get("cv_r2_std",  "N/A"):.4f}')
-                else:
-                    st.info("No training metrics found in model bundle.")
-            else:
-                st.info("Model loaded successfully!")
+    embedder = load_embedder()
 
     st.markdown("---")
 
     # Inputs
     uploaded = st.file_uploader("📁 Upload Resume (PDF or DOCX)", type=["pdf", "docx"])
-    jd_text  = st.text_area("📋 Paste Job Description", height=200)
+    jd_text = st.text_area("📋 Paste Job Description", height=200)
 
     if st.button("🚀 Score Resume", use_container_width=True):
         if not uploaded:
@@ -340,15 +211,11 @@ def main():
                 st.error(str(e))
                 return
 
-            # Show warning if model is not available
-            if model_bundle is None:
-                st.info("ℹ️ Using rule-based scoring only (ML model unavailable)")
-
             data = compute_all_scores(model_bundle, embedder, resume_text, jd_text)
 
         # ── Final Score Display ────────────────────────────────────────────
         st.markdown("---")
-        final  = data["final_score"]
+        final = data["final_score"]
         label, colour = get_score_label(final)
 
         st.markdown(
@@ -372,7 +239,6 @@ def main():
             ver_result = data["versions"][ver_key]
             s = ver_result["out_of_100"]
 
-            # Colour band per score
             if s >= 75:
                 s_colour = "green"
             elif s >= 55:
@@ -406,9 +272,8 @@ def main():
                     f"({ver_cfg['keyword']} × {data['kw']}) + "
                     f"({ver_cfg['depth']} × {data['depth']}) "
                     f"= **{vr['rule_score']}**\n\n"
-                    f"**ML Model Score** = **{vr['model_score']}**\n\n"
-                    f"**Hybrid** = (0.30 × {vr['model_score']}) + (0.70 × {vr['rule_score']}) "
-                    f"= **{vr['final_raw']}** → **{vr['out_of_100']} / 100**"
+                    f"**ML Model Score** = **0.0** (disabled)\n\n"
+                    f"**Final Score** = **{vr['final_raw']}** → **{vr['out_of_100']} / 100**"
                 )
                 st.markdown("---")
 
@@ -425,8 +290,8 @@ def main():
         st.subheader("📐 Raw Feature Scores")
         c1, c2, c3 = st.columns(3)
         c1.metric("🧠 Semantic Similarity", data["sem"])
-        c2.metric("🔑 Keyword Overlap",     data["kw"])
-        c3.metric("📏 Depth Score",         data["depth"])
+        c2.metric("🔑 Keyword Overlap", data["kw"])
+        c3.metric("📏 Depth Score", data["depth"])
 
         # ── Feedback ───────────────────────────────────────────────────────
         st.markdown("---")
