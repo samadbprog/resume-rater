@@ -57,21 +57,49 @@ VERSIONS = {
 # ── Loaders ───────────────────────────────────────────────────────────────────
 @st.cache_resource
 def load_model():
-    """Download and load the model from Hugging Face Hub"""
+    """Download and load the model from Hugging Face Hub with multiple fallback methods"""
     try:
-        # Try hf_hub_download first with token=False for public repo
+        # Download the model file from Hugging Face
         model_path = hf_hub_download(
             repo_id=REPO_ID,
             filename=FILENAME,
             repo_type="model",
-            token=False  # Explicitly no token for public repo
+            token=False
         )
         
-        with open(model_path, "rb") as f:
-            model_bundle = pickle.load(f)
+        # Try multiple loading methods
+        model_bundle = None
+        errors = []
         
-        st.success("✅ Model loaded successfully from Hugging Face!")
-        return model_bundle
+        # Method 1: Standard pickle
+        try:
+            with open(model_path, "rb") as f:
+                model_bundle = pickle.load(f)
+            st.success("✅ Model loaded successfully with pickle!")
+            return model_bundle
+        except Exception as e:
+            errors.append(f"pickle: {e}")
+        
+        # Method 2: joblib
+        try:
+            import joblib
+            model_bundle = joblib.load(model_path)
+            st.success("✅ Model loaded successfully with joblib!")
+            return model_bundle
+        except Exception as e:
+            errors.append(f"joblib: {e}")
+        
+        # Method 3: numpy (if model was saved as numpy array)
+        try:
+            model_bundle = np.load(model_path, allow_pickle=True).item()
+            st.success("✅ Model loaded successfully with numpy!")
+            return model_bundle
+        except Exception as e:
+            errors.append(f"numpy: {e}")
+        
+        # If all methods failed
+        st.error(f"All loading methods failed: {', '.join(errors)}")
+        return None
         
     except Exception as e:
         st.warning(f"hf_hub_download failed: {e}. Trying direct download...")
@@ -79,12 +107,27 @@ def load_model():
         try:
             # Fallback: direct download
             url = f"https://huggingface.co/{REPO_ID}/resolve/main/{FILENAME}"
-            response = requests.get(url)
+            response = requests.get(url, timeout=30)
             response.raise_for_status()
             
-            model_bundle = pickle.loads(response.content)
-            st.success("✅ Model loaded successfully via direct download!")
-            return model_bundle
+            # Try loading from bytes with different methods
+            try:
+                model_bundle = pickle.loads(response.content)
+                st.success("✅ Model loaded successfully via direct download (pickle)!")
+                return model_bundle
+            except:
+                try:
+                    import joblib
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl') as tmp:
+                        tmp.write(response.content)
+                        tmp_path = tmp.name
+                    model_bundle = joblib.load(tmp_path)
+                    st.success("✅ Model loaded successfully via direct download (joblib)!")
+                    return model_bundle
+                except Exception as e2:
+                    st.error(f"Failed to load model from direct download: {e2}")
+                    return None
             
         except Exception as e2:
             st.error(f"Failed to load model: {e2}")
@@ -140,10 +183,32 @@ def compute_version_score(model_bundle, sem: float, kw: float,
     
     # ML model score (only if model exists)
     if model_bundle is not None:
-        features = np.array([[sem, kw, depth]])
-        model_score = float(np.clip(model_bundle["model"].predict(features)[0], 0, 1))
-        # Hybrid blend
-        final_raw = (BLEND_MODEL * model_score) + (BLEND_RULE * rule_score)
+        try:
+            features = np.array([[sem, kw, depth]])
+            # Handle different model types
+            if hasattr(model_bundle, "predict"):
+                # It's a scikit-learn model
+                model_score = float(np.clip(model_bundle.predict(features)[0], 0, 1))
+            elif isinstance(model_bundle, dict) and "model" in model_bundle:
+                # It's a bundle dictionary
+                model_score = float(np.clip(model_bundle["model"].predict(features)[0], 0, 1))
+            else:
+                # Unknown format - fallback to rule-based
+                model_score = 0.0
+                final_raw = rule_score
+                return {
+                    "model_score": 0.0,
+                    "rule_score": round(rule_score, 4),
+                    "final_raw": round(rule_score, 4),
+                    "out_of_100": round(rule_score * 100, 1),
+                }
+            
+            # Hybrid blend
+            final_raw = (BLEND_MODEL * model_score) + (BLEND_RULE * rule_score)
+        except Exception as e:
+            st.warning(f"ML model prediction failed: {e}. Using rule-based only.")
+            model_score = 0.0
+            final_raw = rule_score
     else:
         # Rule-based only
         model_score = 0.0
@@ -240,15 +305,19 @@ def main():
     else:
         # Training metrics (only if model loaded)
         with st.expander("📊 Model Training Metrics"):
-            metrics = model_bundle.get("metrics", {})
-            if metrics:
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Test MAE",   f'{metrics.get("test_mae",   "N/A"):.4f}')
-                col2.metric("Test R²",    f'{metrics.get("test_r2",    "N/A"):.4f}')
-                col3.metric("CV R² Mean", f'{metrics.get("cv_r2_mean", "N/A"):.4f} ± '
-                                          f'{metrics.get("cv_r2_std",  "N/A"):.4f}')
+            # Check if model is a bundle with metrics
+            if isinstance(model_bundle, dict) and "metrics" in model_bundle:
+                metrics = model_bundle.get("metrics", {})
+                if metrics:
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Test MAE",   f'{metrics.get("test_mae",   "N/A"):.4f}')
+                    col2.metric("Test R²",    f'{metrics.get("test_r2",    "N/A"):.4f}')
+                    col3.metric("CV R² Mean", f'{metrics.get("cv_r2_mean", "N/A"):.4f} ± '
+                                              f'{metrics.get("cv_r2_std",  "N/A"):.4f}')
+                else:
+                    st.info("No training metrics found in model bundle.")
             else:
-                st.info("No training metrics found in model bundle.")
+                st.info("Model loaded successfully!")
 
     st.markdown("---")
 
