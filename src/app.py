@@ -9,6 +9,9 @@ import io
 import pickle
 import os
 
+import os
+os.environ["HF_TOKEN"] = st.secrets["HF_TOKEN"]
+
 # ── Config ────────────────────────────────────────────────────────────────────
 EMBED_MODEL = "all-MiniLM-L6-v2"
 
