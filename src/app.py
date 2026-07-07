@@ -217,7 +217,7 @@ def main():
     embedder = load_embedder()
 
     if load_method == "hybrid":
-        st.success("✅ Running in Hybrid mode (ML + Rule-Based) · 50% ML / 50% Rule.")
+        st.success("✅ Running in Hybrid mode (ML + Rule-Based) · 35% ML / 65% Rule.")
     else:
         st.warning("⚠️ Running in rule-based scoring mode (model not loaded).")
 
