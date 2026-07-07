@@ -9,20 +9,12 @@ import docx
 import io
 
 # ── Config ────────────────────────────────────────────────────────────────────
-# Hugging Face model info (kept for reference but not used)
-REPO_ID = "Goldenf4ng/resume-scorer-model"
-FILENAME = "model.pkl"
-
 EMBED_MODEL = "all-MiniLM-L6-v2"
 
 DEPTH_INDICATORS = {
     'auc-roc', 'precision', 'recall', 'f1', '%',
     'improved', 'fine-tuned', 'pipeline', 'deployed', 'kaggle'
 }
-
-# Hybrid blend weights (applied independently to all 3 versions)
-BLEND_MODEL = 0.30
-BLEND_RULE  = 0.70
 
 # ── Version Definitions ───────────────────────────────────────────────────────
 VERSIONS = {
@@ -56,7 +48,6 @@ VERSIONS = {
 @st.cache_resource
 def load_model():
     """Skip loading ML model - use rule-based scoring only"""
-    st.info("ℹ️ Using rule-based scoring only (ML model disabled for compatibility)")
     return None
 
 @st.cache_resource
@@ -102,9 +93,7 @@ def get_depth_score(resume_text: str) -> float:
     return 0.00
 
 # ── Per-Version Scorer ────────────────────────────────────────────────────────
-def compute_version_score(model_bundle, sem: float, kw: float,
-                          depth: float, ver: dict) -> dict:
-    # Rule-based score only (model_bundle is always None)
+def compute_version_score(sem: float, kw: float, depth: float, ver: dict) -> dict:
     rule_score = (ver["semantic"] * sem) + (ver["keyword"] * kw) + (ver["depth"] * depth)
     final_raw = float(np.clip(rule_score, 0, 1))
     
@@ -116,17 +105,14 @@ def compute_version_score(model_bundle, sem: float, kw: float,
     }
 
 # ── Master Scorer ─────────────────────────────────────────────────────────────
-def compute_all_scores(model_bundle, embedder,
-                       resume_text: str, jd_text: str) -> dict:
+def compute_all_scores(embedder, resume_text: str, jd_text: str) -> dict:
     sem = get_semantic_similarity(embedder, resume_text, jd_text)
     kw = get_keyword_overlap(resume_text, jd_text)
     depth = get_depth_score(resume_text)
 
     results = {}
     for ver_key, ver_cfg in VERSIONS.items():
-        results[ver_key] = compute_version_score(
-            model_bundle, sem, kw, depth, ver_cfg
-        )
+        results[ver_key] = compute_version_score(sem, kw, depth, ver_cfg)
 
     weighted_avg = sum(
         results[k]["out_of_100"] * VERSIONS[k]["avg_weight"]
@@ -186,8 +172,7 @@ def main():
     st.title("📄 AI Resume Scorer")
     st.caption("Hybrid ML + Rule-Based · Three-Lens Scoring Engine")
 
-    # Load resources
-    model_bundle = load_model()
+    # Load resources (no message displayed)
     embedder = load_embedder()
 
     st.markdown("---")
@@ -211,7 +196,7 @@ def main():
                 st.error(str(e))
                 return
 
-            data = compute_all_scores(model_bundle, embedder, resume_text, jd_text)
+            data = compute_all_scores(embedder, resume_text, jd_text)
 
         # ── Final Score Display ────────────────────────────────────────────
         st.markdown("---")
@@ -272,7 +257,6 @@ def main():
                     f"({ver_cfg['keyword']} × {data['kw']}) + "
                     f"({ver_cfg['depth']} × {data['depth']}) "
                     f"= **{vr['rule_score']}**\n\n"
-                    f"**ML Model Score** = **0.0** (disabled)\n\n"
                     f"**Final Score** = **{vr['final_raw']}** → **{vr['out_of_100']} / 100**"
                 )
                 st.markdown("---")
