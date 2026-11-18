@@ -1,26 +1,36 @@
 import os
+from sentence_transformers import util
 from resume_parser import parse_resume_structured
 from rule_engine import get_rule_score
+# Import the model we already loaded in semantic_matcher
+from semantic_matcher import model 
 
 def get_ml_score(parsed_resume, jd_text):
     """
-    SIMULATED ML MODEL.
-    In the future, this will call your trained HuggingFace model.
-    For now, it acts as a basic semantic whole-document cosine similarity.
+    REAL ML SCORE: Whole-document semantic similarity.
+    Instead of a fake placeholder, we embed the entire resume and JD,
+    and calculate the cosine similarity.
     """
-    # Simulating an ML model that is a bit more forgiving than the strict rules
-    # (This is just a placeholder to make the math work for now)
-    bullets = parsed_resume.get("experience", []) + parsed_resume.get("projects", [])
-    if len(bullets) > 3:
-        return 0.65 # Fake high score for having a lot of bullets
-    return 0.40
+    resume_text = parsed_resume["raw_text"]
+    
+    # Embed the full text
+    res_emb = model.encode(resume_text, convert_to_tensor=True)
+    jd_emb = model.encode(jd_text, convert_to_tensor=True)
+    
+    # Cosine similarity (usually lands between 0.2 and 0.6 for whole docs)
+    cosine_sim = float(util.cos_sim(res_emb, jd_emb)[0][0])
+    
+    # Rescale it to 0-1 (assuming 0.15 is floor, 0.65 is ceiling)
+    rescaled = max(0.0, min(1.0, (cosine_sim - 0.15) / 0.50))
+    
+    return rescaled
 
 def calculate_final_score(parsed_resume, jd_text, required_skills):
     # 1. Get the Rule Score
     rule_results = get_rule_score(parsed_resume, jd_text, required_skills)
     rule_score = rule_results["final_rule_score"]
 
-    # 2. Get the ML Score
+    # 2. Get the REAL ML Score
     ml_score = get_ml_score(parsed_resume, jd_text)
 
     # 3. BLEND: 0.30 ML + 0.70 Rule
@@ -36,35 +46,3 @@ def calculate_final_score(parsed_resume, jd_text, required_skills):
         "final_score_out_of_10": final_score_out_of_10,
         "breakdown": rule_results
     }
-
-# ============================================================
-# TEST BLOCK
-# ============================================================
-if __name__ == "__main__":
-    base_dir = r"C:\Samad\SundarPitchTheAi\Projects\semantic-resume-scorer\Sample space\Simulated SS"
-    pdf_path = os.path.join(base_dir, "R1.pdf")
-    jd_path = os.path.join(base_dir, "Job Description Sample.txt")
-
-    with open(jd_path, "r", encoding="utf-8") as f:
-        jd_text = f.read()
-
-    parsed = parse_resume_structured(pdf_path)
-    required_skills = ["Python", "SQL", "Machine Learning", "Git"]
-
-    print("\n" + "="*50)
-    print("FINAL SCORER TEST (R1.pdf)")
-    print("="*50)
-    
-    results = calculate_final_score(parsed, jd_text, required_skills)
-    
-    print("\n--- SCORE BREAKDOWN ---")
-    print(f"Semantic Similarity: {results['breakdown']['sem_sim']}")
-    print(f"Keyword Evidence:    {results['breakdown']['kw_overlap']}")
-    print(f"Depth Score:         {results['breakdown']['depth']}")
-    print("-" * 20)
-    print(f"Rule Score (70%):    {results['rule_score']}")
-    print(f"ML Score (30%):      {results['ml_score']}")
-    print("-" * 20)
-    print(f"BLENDED SCORE:       {results['blended_score']} / 1.0")
-    print(f"FINAL SCORE:         {results['final_score_out_of_10']} / 10")
-    print("="*50)
